@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#f4f7fb">
+  <title>ひと筆マージ</title>
+  <style>
+    :root { --ink:#182235; --paper:#f4f7fb; --accent:#6c63ff; }
+    * { box-sizing:border-box; }
+    html, body { overscroll-behavior:none; -webkit-touch-callout:none; }
+    body { margin:0; min-height:100dvh; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); display:grid; place-items:center; overflow:hidden; color:var(--ink); font-family:"Hiragino Sans","Yu Gothic UI",system-ui,sans-serif; background:radial-gradient(circle at 20% 0%,#e8e2ff 0,transparent 34%),radial-gradient(circle at 100% 90%,#c9f1ed 0,transparent 32%),var(--paper); }
+    .app { width:min(94vw,620px); padding:clamp(16px,4vw,28px) 0 20px; }
+    header { display:flex; align-items:end; justify-content:space-between; gap:12px; margin-bottom:18px; }
+    h1 { margin:0; font-size:clamp(25px,6vw,38px); line-height:1; letter-spacing:-.07em; }
+    h1 span { display:block; margin-top:7px; color:#667085; font-size:11px; letter-spacing:.16em; font-weight:700; }
+    .scores { display:flex; gap:8px; }
+    .score-box { min-width:74px; padding:8px 10px; text-align:right; border:1px solid #dce3ee; border-radius:12px; background:#ffffffaa; box-shadow:0 6px 18px #68779312; }
+    .score-box small { display:block; color:#778196; font-size:9px; font-weight:800; letter-spacing:.08em; }
+    .score-box strong { font-size:18px; font-variant-numeric:tabular-nums; }
+    .board-wrap { position:relative; padding:clamp(7px,1.8vw,11px); border:1px solid #ffffffdd; border-radius:clamp(18px,4vw,26px); background:#cbd4e2aa; box-shadow:0 20px 45px #33415525, inset 0 1px 0 #fff; touch-action:none; user-select:none; -webkit-user-select:none; }
+    #board { display:grid; grid-template-columns:repeat(6,1fr); gap:clamp(5px,1.3vw,9px); aspect-ratio:1; }
+    .tile { position:relative; display:grid; place-items:center; min-width:0; border-radius:clamp(9px,2.5vw,15px); color:#fff; font-size:clamp(18px,7.6vw,42px); font-weight:900; letter-spacing:-.06em; cursor:crosshair; box-shadow:inset 0 2px 0 #ffffff4d, inset 0 -4px 0 #00000012, 0 3px 5px #25334d20; transition:transform .13s ease, filter .13s ease, box-shadow .13s ease; }
+    .tile::after { content:""; position:absolute; inset:0; border-radius:inherit; background:linear-gradient(135deg,#fff4,transparent 48%); pointer-events:none; }
+    .tile.selected { z-index:2; transform:scale(1.08); filter:brightness(1.08); outline:3px solid #fff; box-shadow:0 0 0 4px #5d52d9, inset 0 2px 0 #ffffff7a, 0 7px 15px #4f46e555; }
+    .tile.merging { animation:merge .34s cubic-bezier(.2,.9,.25,1.25) both; }
+    .tile.refilling { animation:refill .38s ease-out both; }
+    @keyframes merge { 0%{transform:scale(1)} 38%{transform:scale(.35);opacity:.3} 70%{transform:scale(1.22)} 100%{transform:scale(1)} }
+    @keyframes refill { from{opacity:0;transform:translateY(-42%) scale(.72)} to{opacity:1;transform:translateY(0) scale(1)} }
+    #trail { position:absolute; inset:0; z-index:1; width:100%; height:100%; overflow:visible; pointer-events:none; }
+    #trail polyline { fill:none; stroke:#fff; stroke-width:8; stroke-linecap:round; stroke-linejoin:round; filter:drop-shadow(0 2px 2px #302b6670); }
+    .status { min-height:40px; display:flex; align-items:center; justify-content:center; margin:14px 0 8px; color:#546176; font-size:13px; font-weight:700; }
+    .status b { color:#5548e5; }
+    .guide { display:flex; justify-content:space-between; gap:10px; padding:13px 15px; border-radius:15px; background:#fff9; color:#657086; font-size:12px; line-height:1.55; }
+    .guide strong { color:var(--ink); }
+    .overlay { position:absolute; inset:0; z-index:4; display:none; place-items:center; border-radius:inherit; background:#17213cd9; color:white; text-align:center; backdrop-filter:blur(5px); }
+    .overlay.show { display:grid; }
+    .overlay h2 { margin:0 0 8px; font-size:30px; }
+    .overlay p { margin:0 0 18px; color:#d8dded; font-size:14px; }
+    button { border:0; border-radius:999px; padding:12px 22px; color:#fff; background:linear-gradient(135deg,#8179ff,#594de5); box-shadow:0 6px 15px #0005; font:inherit; font-weight:800; cursor:pointer; }
+    button:active { transform:translateY(1px); }
+    @media (max-width:390px) { .app { width:96vw; } .guide { font-size:11px; padding:10px; } .score-box { min-width:66px; padding:6px 8px; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>ひと筆マージ<span>ONE STROKE MERGE</span></h1>
+      <div class="scores"><div class="score-box"><small>SCORE</small><strong id="score">0</strong></div><div class="score-box"><small>BEST</small><strong id="best-score">0</strong></div></div>
+    </header>
+    <section class="board-wrap" id="board-wrap" aria-label="ゲーム盤面">
+      <svg id="trail" aria-hidden="true"><polyline id="trail-line" points=""></polyline></svg>
+      <div id="board"></div>
+      <div class="overlay" id="game-over"><div><h2>ゲームオーバー</h2><p id="game-over-text"></p><button id="retry" type="button">もう一度</button></div></div>
+    </section>
+    <div class="status" id="status">同じ数字を <b>2つ以上</b> なぞって合体！</div>
+    <div class="guide"><span><strong>遊び方</strong><br>上下左右で同じ数字をつなごう</span><span><strong>最高タイル</strong><br><span id="max-tile">3</span>　<span id="achievement">まずは10を目指そう！</span></span></div>
+  </main>
+  <script>
+    'use strict';
+    // ゲームの状態は要求仕様どおり、盤面配列を中心に保持する。
+    const SIZE = 6;
+    let board = [];
+    let selectedCells = [];
+    let score = 0;
+    let bestScore = 0;
+    let isGameOver = false;
+    let maxTileEver = 3;
+    let isResolving = false;
+    let pointerId = null;
+    const $ = (id) => document.getElementById(id);
+    const boardEl = $('board'), wrapEl = $('board-wrap'), trail = $('trail-line');
+
+    function createBoard() {
+      board = Array.from({ length: SIZE }, () => Array.from({ length: SIZE }, () => 1 + Math.floor(Math.random() * 3)));
+      selectedCells = []; score = 0; isGameOver = false; isResolving = false;
+      $('game-over').classList.remove('show');
+      renderBoard(); updateHud();
+    }
+    function tileColor(n) {
+      const colors = ['','#72a8ff','#5bcf9a','#ffaf58','#f77b96','#aa7cf5','#54c7da','#e99e4b','#ee6b79','#5f99ed','#a96ce1','#3bbf9e','#e174b9'];
+      return colors[Math.min(n, 12)] || '#4b5f83';
+    }
+    function renderBoard(refillCells = [], mergeCell = null) {
+      boardEl.innerHTML = '';
+      board.forEach((row, y) => row.forEach((value, x) => {
+        const tile = document.createElement('div');
+        tile.className = 'tile'; tile.dataset.x = x; tile.dataset.y = y;
+        tile.style.background = `linear-gradient(145deg, ${tileColor(value)}, ${tileColor(value)}cc)`;
+        tile.textContent = value;
+        if (selectedCells.some(c => c.x === x && c.y === y)) tile.classList.add('selected');
+        if (refillCells.some(c => c.x === x && c.y === y)) tile.classList.add('refilling');
+        if (mergeCell && mergeCell.x === x && mergeCell.y === y) tile.classList.add('merging');
+        boardEl.appendChild(tile);
+      }));
+      drawTrail();
+    }
+    function startSelection(cell) {
+      if (isGameOver || isResolving || !cell) return;
+      selectedCells = [cell]; renderBoard();
+    }
+    function isValidNextCell(cell) {
+      if (!cell || selectedCells.length === 0) return false;
+      const last = selectedCells[selectedCells.length - 1];
+      const sameValue = board[cell.y][cell.x] === board[last.y][last.x];
+      const adjacent = Math.abs(cell.x - last.x) + Math.abs(cell.y - last.y) === 1;
+      const unused = !selectedCells.some(c => c.x === cell.x && c.y === cell.y);
+      return sameValue && adjacent && unused;
+    }
+    function extendSelection(cell) {
+      if (!isValidNextCell(cell)) return;
+      selectedCells.push(cell); renderBoard();
+    }
+    function finishSelection() {
+      if (pointerId === null) return;
+      pointerId = null;
+      if (selectedCells.length >= 2) mergeSelectedCells();
+      else { selectedCells = []; renderBoard(); }
+    }
+    function mergeSelectedCells() {
+      isResolving = true;
+      const count = selectedCells.length;
+      const target = selectedCells[count - 1];
+      const nextNumber = board[target.y][target.x] + 1;
+      const gained = count * nextNumber * 10 + (count >= 5 ? count * 50 : 0);
+      selectedCells.slice(0, -1).forEach(c => { board[c.y][c.x] = 0; });
+      board[target.y][target.x] = nextNumber;
+      score += gained;
+      maxTileEver = Math.max(maxTileEver, nextNumber);
+      localStorage.setItem('hitofudeMaxTile', String(maxTileEver));
+      updateHud(`+${gained}${count >= 5 ? ' 連鎖ボーナス！' : ''}`);
+      selectedCells = [];
+      renderBoard([], target);
+      window.setTimeout(() => refillBoard(), 330);
+    }
+    function newTileValue() {
+      // 高い数字はかなり低確率。盤面が育っても基本は1〜3を供給する。
+      const r = Math.random();
+      if (r < 0.52) return 1;
+      if (r < 0.82) return 2;
+      if (r < 0.96) return 3;
+      return Math.max(4, Math.min(5, Math.floor(Math.max(...board.flat()) / 4) + 3));
+    }
+    function refillBoard() {
+      const added = [];
+      // 各列ごとに下へ詰め、空いた上部に新しいタイルを加える。
+      for (let x = 0; x < SIZE; x++) {
+        const kept = [];
+        for (let y = SIZE - 1; y >= 0; y--) if (board[y][x]) kept.push(board[y][x]);
+        for (let y = SIZE - 1, i = 0; y >= 0; y--, i++) {
+          if (i < kept.length) board[y][x] = kept[i];
+          else { board[y][x] = newTileValue(); added.push({ x, y }); }
+        }
+      }
+      renderBoard(added); isResolving = false;
+      if (!hasValidMove()) { isGameOver = true; $('game-over-text').textContent = `スコア ${score.toLocaleString()}　最高タイル ${maxTileEver}`; $('game-over').classList.add('show'); }
+    }
+    function hasValidMove() {
+      return board.some((row, y) => row.some((value, x) => value === board[y][x + 1] || (board[y + 1] && value === board[y + 1][x])));
+    }
+    function updateHud(message) {
+      if (score > bestScore) { bestScore = score; localStorage.setItem('hitofudeBestScore', String(bestScore)); }
+      $('score').textContent = score.toLocaleString(); $('best-score').textContent = bestScore.toLocaleString();
+      $('max-tile').textContent = maxTileEver;
+      $('achievement').textContent = maxTileEver >= 12 ? '12到達、すごい！' : maxTileEver >= 10 ? '10到達、おめでとう！' : 'まずは10を目指そう！';
+      if (message) $('status').textContent = message;
+    }
+    function pointToCell(clientX, clientY) {
+      const element = document.elementFromPoint(clientX, clientY);
+      const tile = element && element.closest('.tile');
+      return tile ? { x: Number(tile.dataset.x), y: Number(tile.dataset.y) } : null;
+    }
+    function drawTrail() {
+      const rect = wrapEl.getBoundingClientRect();
+      trail.setAttribute('points', selectedCells.map(c => {
+        const el = boardEl.querySelector(`[data-x="${c.x}"][data-y="${c.y}"]`); const r = el.getBoundingClientRect();
+        return `${r.left - rect.left + r.width / 2},${r.top - rect.top + r.height / 2}`;
+      }).join(' '));
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      bestScore = Number(localStorage.getItem('hitofudeBestScore')) || 0;
+      maxTileEver = Math.max(3, Number(localStorage.getItem('hitofudeMaxTile')) || 3);
+      wrapEl.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button !== 0) return; e.preventDefault(); pointerId = e.pointerId; wrapEl.setPointerCapture(e.pointerId); startSelection(pointToCell(e.clientX, e.clientY)); });
+      wrapEl.addEventListener('pointermove', e => { if (e.pointerId === pointerId) { e.preventDefault(); extendSelection(pointToCell(e.clientX, e.clientY)); } });
+      wrapEl.addEventListener('pointerup', e => { if (e.pointerId === pointerId) finishSelection(); });
+      wrapEl.addEventListener('pointercancel', finishSelection);
+      window.addEventListener('resize', drawTrail);
+      $('retry').addEventListener('click', createBoard);
+      createBoard();
+    });
+  </script>
+</body>
+</html>
