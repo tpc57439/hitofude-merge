@@ -51,7 +51,7 @@
     <div class="big">🐱🍣</div>
     <h1>ねこ寿司ループ</h1>
     <ol>
-      <li>下のトレイをタップすると、いちばん上の<b>同じネタのかたまり</b>がレーンに流れます</li>
+      <li>下のトレイをタップすると、いちばん上の寿司が<b>1皿ずつ</b>レーンに流れます</li>
       <li>お客さんは注文したネタが目の前を通ると取ってくれます</li>
       <li>レーンがいっぱいで流せなくなったら負け！</li>
       <li>レーンを長押しすると早送り</li>
@@ -126,10 +126,9 @@
   }
 
   // ---------- ステージ生成 ----------
-  function runLen(col) {
-    let n = 0;
-    while (n < col.length && col[n] === col[0]) n++;
-    return n;
+  // 1回のタップでトレイの先頭から流れる数（1皿ずつ）
+  function pushCount(col) {
+    return col.length ? 1 : 0;
   }
 
   // 抽象化したシミュレーション（時間制限はないのでレーンの動きは無視できる）
@@ -156,7 +155,7 @@
       const need = new Set(seats.filter(Boolean).map(s => s.t));
       const best = pick(cols, need, cap - used);
       if (best < 0) return false;
-      const c = cols[best], t = c[0], n = runLen(c);
+      const c = cols[best], t = c[0], n = pushCount(c);
       c.splice(0, n);
       belt[t] = (belt[t] || 0) + n;
       used += n;
@@ -169,7 +168,7 @@
     let best = -1, bestScore = -Infinity;
     cols.forEach((c, i) => {
       if (!c.length) return;
-      const n = runLen(c);
+      const n = pushCount(c);
       if (n > free) return;
       let score;
       if (need.has(c[0])) score = 1000 - n;
@@ -184,7 +183,7 @@
   };
   // なにも考えずに、注文に合う列 → なければ適当な列を流す打ち方
   function naivePick(cols, need, free) {
-    const fit = cols.map((c, i) => i).filter(i => cols[i].length && runLen(cols[i]) <= free);
+    const fit = cols.map((c, i) => i).filter(i => cols[i].length && pushCount(cols[i]) <= free);
     if (!fit.length) return -1;
     const good = fit.filter(i => need.has(cols[i][0]));
     const pool = good.length ? good : fit;
@@ -488,11 +487,11 @@
   function tapColumn(i) {
     const col = G.cols[i];
     if (!col || !col.length || G.ended) return;
-    const n = runLen(col);
+    const n = pushCount(col);
     if (n > G.cap - used()) {
       G.shake[i] = 0.35;
       sfx('bad');
-      showToast('レーンに空きがたりない！');
+      showToast('レーンがいっぱい！');
       return;
     }
     const r = colRect(i), c = Lo.col;
@@ -601,7 +600,7 @@
       const need = new Set(G.seats.filter(s => s.state === 'order' && s.need > 0).map(s => s.order.t));
       const match = G.slots.some(s => s && need.has(s.t)) || G.pending.some(s => need.has(s.t));
       const free = G.cap - used();
-      const canPush = G.cols.some(c => c.length && runLen(c) <= free);
+      const canPush = G.cols.some(c => c.length && pushCount(c) <= free);
       G.dead = (!match && !canPush) ? G.dead + dt : 0;
     } else G.dead = 0;
     if (G.dead > 1.5) {
@@ -708,7 +707,7 @@
       rr(rc.x + 4, rc.y + 4, rc.w - 8, rc.h - 8, 7);
       ctx.fillStyle = '#b8783f'; ctx.fill();
       if (col.length) {
-        const n = runLen(col);
+        const n = pushCount(col);
         const vis = Math.min(col.length, c.visible);
         const t = performance.now() / 1000;
         rr(rc.x + 6, rc.y + 7, rc.w - 12, c.step * Math.min(n, vis) + 4, 8);
