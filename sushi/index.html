@@ -29,6 +29,11 @@
     .card ol { margin:10px 0; padding-left:1.3em; text-align:left; font-size:14px; line-height:1.7; color:#6b4a2c; }
     .card button { margin-top:12px; padding:14px 34px; border:0; border-radius:16px; background:linear-gradient(#ff7a4a,#e3452a); color:#fff; font-size:20px; font-weight:900; box-shadow:0 5px 0 #a82c17; }
     .card button:active { transform:translateY(3px); box-shadow:0 2px 0 #a82c17; }
+    .modes { display:flex; gap:8px; margin-top:14px; }
+    .card .modes button { flex:1; margin:0; padding:9px 4px; font-size:15px; background:#c9a37a; box-shadow:0 3px 0 #8d6a45; }
+    .card .modes button:nth-child(2) { background:#e08a3a; box-shadow:0 3px 0 #a35a1a; }
+    .card .modes button:nth-child(3) { background:#8a2d2d; box-shadow:0 3px 0 #561818; }
+    .card .modes small { display:block; font-size:11px; opacity:.85; }
     .card .sub { display:block; margin:14px auto 0; padding:8px 18px; font-size:14px; background:#c9a37a; box-shadow:0 3px 0 #8d6a45; }
   </style>
 </head>
@@ -52,7 +57,11 @@
       <li>レーンを長押しすると早送り</li>
     </ol>
     <button id="btnStart">あそぶ</button>
-    <button class="sub" id="btnReset">Lv.1 からやりなおす</button>
+    <div class="modes">
+      <button data-lv="1">かんたん<small>Lv.1〜</small></button>
+      <button data-lv="8">むずかしい<small>Lv.8〜</small></button>
+      <button data-lv="15">鬼<small>Lv.15〜</small></button>
+    </div>
   </div></div>
 
   <div class="overlay" id="ovClear"><div class="card">
@@ -80,7 +89,7 @@
   const TYPES = ['maguro', 'tamago', 'kappa', 'salmon', 'onigiri', 'ikura', 'ebi', 'tako', 'ika'];
   const ANIMALS = ['🐶', '🐰', '🐻', '🦊', '🐼', '🐨', '🐯', '🐸', '🐹', '🐷', '🐵', '🐧', '🐮', '🐭'];
   const TRACK_W = 44;
-  const BASE_SPEED = 120; // px/秒
+  const BASE_SPEED = 210; // px/秒
   const SEAT_COUNT = 4;
 
   const rand = n => Math.floor(Math.random() * n);
@@ -123,8 +132,9 @@
     return n;
   }
 
-  // 抽象化したシミュレーションで貪欲に解けるか確認（時間制限はないのでレーンの動きは無視できる）
-  function solvable(cols0, orders, cap) {
+  // 抽象化したシミュレーション（時間制限はないのでレーンの動きは無視できる）
+  // pick(cols, need, free) が流す列を選ぶ。最後まで配膳できれば true
+  function simulate(cols0, orders, cap, pick) {
     const cols = cols0.map(c => c.slice());
     const belt = {};
     let used = 0, q = 0;
@@ -144,19 +154,7 @@
       }
       if (seats.every(s => !s)) return true;
       const need = new Set(seats.filter(Boolean).map(s => s.t));
-      let best = -1, bestScore = -Infinity;
-      cols.forEach((c, i) => {
-        if (!c.length) return;
-        const n = runLen(c);
-        if (n > cap - used) return;
-        let score;
-        if (need.has(c[0])) score = 1000 - n;
-        else {
-          const depth = c.findIndex(t => need.has(t));
-          score = (depth < 0 ? -500 : -depth * 10) - n;
-        }
-        if (score > bestScore) { bestScore = score; best = i; }
-      });
+      const best = pick(cols, need, cap - used);
       if (best < 0) return false;
       const c = cols[best], t = c[0], n = runLen(c);
       c.splice(0, n);
@@ -166,29 +164,69 @@
     return false;
   }
 
+  // 先読みして掘る賢い打ち方（jitter でゆらぎを入れて何通りか試す）
+  const smartPick = jitter => (cols, need, free) => {
+    let best = -1, bestScore = -Infinity;
+    cols.forEach((c, i) => {
+      if (!c.length) return;
+      const n = runLen(c);
+      if (n > free) return;
+      let score;
+      if (need.has(c[0])) score = 1000 - n;
+      else {
+        const depth = c.findIndex(t => need.has(t));
+        score = (depth < 0 ? -500 : -depth * 10) - n;
+      }
+      score += Math.random() * jitter;
+      if (score > bestScore) { bestScore = score; best = i; }
+    });
+    return best;
+  };
+  // なにも考えずに、注文に合う列 → なければ適当な列を流す打ち方
+  function naivePick(cols, need, free) {
+    const fit = cols.map((c, i) => i).filter(i => cols[i].length && runLen(cols[i]) <= free);
+    if (!fit.length) return -1;
+    const good = fit.filter(i => need.has(cols[i][0]));
+    const pool = good.length ? good : fit;
+    return pool[rand(pool.length)];
+  }
+
+  function solvable(cols, orders, cap) {
+    if (simulate(cols, orders, cap, smartPick(0))) return true;
+    for (let k = 0; k < 12; k++) if (simulate(cols, orders, cap, smartPick(40))) return true;
+    return false;
+  }
+
+  // 何も考えない打ち方で何回失敗するか（難しさの目安）
+  function naiveFails(cols, orders, cap, tries) {
+    let f = 0;
+    for (let k = 0; k < tries; k++) if (!simulate(cols, orders, cap, naivePick)) f++;
+    return f;
+  }
+
   function genLevel(lv) {
     const nTypes = Math.min(TYPES.length, 3 + lv);
     const nCust = Math.min(30, 6 + lv * 2);
     const nCols = lv < 3 ? 4 : 5;
-    const cap = Math.max(20, 40 - (lv - 1) * 2);
+    const cap = Math.max(12, Math.round(28 - lv));
     const maxCnt = lv < 3 ? 4 : lv < 6 ? 5 : 6;
-    let noise = Math.min(0.65, 0.12 + lv * 0.06);
+    // 何も考えずに打つと 6 回中これだけ失敗する盤面を出す
+    const wantFails = lv < 4 ? 0 : lv < 8 ? 1 : lv < 12 ? 3 : 4;
+    let noise = Math.min(1, 0.2 + lv * 0.07);
     const types = TYPES.slice(0, nTypes);
-    for (let tries = 0; tries < 400; tries++) {
-      if (tries && tries % 50 === 0) noise *= 0.6;
+    let fallback = null;
+    for (let tries = 0; tries < 600; tries++) {
+      if (tries && tries % 100 === 0) noise *= 0.8;
       const orders = [];
       for (let i = 0; i < nCust; i++) orders.push({ t: types[rand(nTypes)], n: 2 + rand(maxCnt - 1) });
-      const runs = [];
+      const pairs = [];
       for (const o of orders) {
         let n = o.n;
-        while (n > 0) { const c = Math.min(n, 1 + rand(3)); runs.push(o.t, c); n -= c; }
+        while (n > 0) { const c = Math.min(n, 1 + rand(3)); pairs.push({ t: o.t, n: c }); n -= c; }
       }
-      // [type, count] の組を並べ替えやすい形に
-      const pairs = [];
-      for (let i = 0; i < runs.length; i += 2) pairs.push({ t: runs[i], n: runs[i + 1] });
       for (let i = 0; i < pairs.length; i++) {
         if (Math.random() < noise) {
-          const j = Math.min(pairs.length - 1, i + 1 + rand(5));
+          const j = Math.min(pairs.length - 1, i + 1 + rand(8 + lv));
           [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
         }
       }
@@ -199,8 +237,12 @@
         const c = cand[rand(cand.length)];
         for (let k = 0; k < p.n; k++) c.push(p.t);
       }
-      if (solvable(cols, orders, cap)) return { cols, orders, cap };
+      if (!solvable(cols, orders, cap)) continue;
+      const fails = wantFails ? naiveFails(cols, orders, cap, 6) : 0;
+      if (fails >= wantFails) return { cols, orders, cap };
+      if (!fallback || fails > fallback.fails) fallback = { cols, orders, cap, fails };
     }
+    if (fallback) return fallback;
     // 念のための保険：ノイズなしで並べる
     const orders = Array.from({ length: nCust }, () => ({ t: types[rand(nTypes)], n: 2 + rand(maxCnt - 1) }));
     const cols = Array.from({ length: nCols }, () => []);
@@ -407,10 +449,10 @@
   function newState(lv) {
     const d = genLevel(lv);
     return {
-      lv, cap: d.cap, L: d.cap,
+      lv, cap: d.cap, L: Math.max(36, d.cap),
       cols: d.cols, maxLen: Math.max(...d.cols.map(c => c.length)),
       queue: d.orders, qi: 0, total: d.orders.length, served: 0,
-      slots: new Array(d.cap).fill(null), off: 0,
+      slots: new Array(Math.max(36, d.cap)).fill(null), off: 0,
       pending: [], flights: [],
       seats: Array.from({ length: SEAT_COUNT }, (_, i) => ({ state: 'empty', timer: 0.15 + i * 0.18, order: null, need: 0, shown: 0, animal: '', pop: 0 })),
       shake: new Array(d.cols.length).fill(0),
@@ -461,7 +503,7 @@
         kind: 'toBelt', t,
         x0: r.x + r.w / 2, y0: r.y + 9 + c.step * k + c.step / 2,
         x1: Lo.cx, y1: Lo.by1 + TRACK_W / 2 + 14,
-        start: now + k * 0.07, dur: 0.3, s0: c.size, s1: 24,
+        start: now + k * 0.05, dur: 0.22, s0: c.size, s1: 24,
       });
     });
     sfx('pop');
@@ -495,7 +537,7 @@
         seat.need--;
         G.slots[i] = null;
         const p = pointAt((pu + d) / L * Lo.P);
-        G.flights.push({ kind: 'toSeat', t: item.t, seat: si, x0: p[0], y0: p[1], x1: Lo.seats[si].bx - 14, y1: Lo.seats[si].by, start: now, dur: 0.32, s0: beltItemSize(), s1: 24 });
+        G.flights.push({ kind: 'toSeat', t: item.t, seat: si, x0: p[0], y0: p[1], x1: Lo.seats[si].bx - 14, y1: Lo.seats[si].by, start: now, dur: 0.24, s0: beltItemSize(), s1: 24 });
         sfx('grab');
         break;
       }
@@ -513,7 +555,7 @@
         seat.shown--;
         seat.pop = 0.25;
         if (seat.shown <= 0) {
-          seat.state = 'done'; seat.timer = 1.0;
+          seat.state = 'done'; seat.timer = 0.7;
           G.served++;
           updateHud();
           sfx('done');
@@ -527,11 +569,11 @@
       if (seat.state === 'order') continue;
       seat.timer -= dt;
       if (seat.timer > 0) continue;
-      if (seat.state === 'done') { seat.state = 'empty'; seat.timer = 0.35; }
+      if (seat.state === 'done') { seat.state = 'empty'; seat.timer = 0.2; }
       else if (seat.state === 'arrive') seat.state = 'order';
       else if (seat.state === 'empty' && G.qi < G.queue.length) {
         const o = G.queue[G.qi++];
-        Object.assign(seat, { state: 'arrive', timer: 0.35, order: o, need: o.n, shown: o.n, animal: ANIMALS[rand(ANIMALS.length)] });
+        Object.assign(seat, { state: 'arrive', timer: 0.25, order: o, need: o.n, shown: o.n, animal: ANIMALS[rand(ANIMALS.length)] });
       }
     }
 
@@ -717,8 +759,8 @@
       return;
     }
     let scale = 1;
-    if (seat.state === 'arrive') scale = 1 - seat.timer / 0.35;
-    if (seat.state === 'done') scale = 1 + Math.sin((1 - seat.timer) * Math.PI * 4) * 0.06;
+    if (seat.state === 'arrive') scale = 1 - seat.timer / 0.25;
+    if (seat.state === 'done') scale = 1 + Math.sin((1 - seat.timer / 0.7) * Math.PI * 4) * 0.06;
     ctx.save();
     ctx.translate(pos.x, pos.y);
     ctx.scale(scale, scale);
@@ -728,7 +770,7 @@
     ctx.restore();
 
     if (seat.state === 'done') {
-      const k = 1 - seat.timer;
+      const k = 1 - seat.timer / 0.7;
       ctx.globalAlpha = Math.max(0, 1 - k);
       ctx.font = '22px system-ui, "Apple Color Emoji", sans-serif';
       ctx.fillText('💕', pos.x + 16, pos.y - 18 - k * 20);
@@ -778,7 +820,9 @@
   window.addEventListener('pointercancel', stopFast);
 
   $('btnStart').onclick = () => { sfx('pop'); startLevel(level); };
-  $('btnReset').onclick = () => { sfx('pop'); startLevel(1); };
+  document.querySelectorAll('.modes button').forEach(b => {
+    b.onclick = () => { sfx('pop'); startLevel(+b.dataset.lv); };
+  });
   $('btnNext').onclick = () => { sfx('pop'); startLevel(G.lv + 1); };
   $('btnAgain').onclick = () => { sfx('pop'); startLevel(G.lv); };
   $('btnRetry').onclick = () => { if (G) startLevel(G.lv); };
@@ -786,7 +830,6 @@
   $('btnSound').onclick = () => { soundOn = !soundOn; store.set('sushi.sound', soundOn); syncSound(); sfx('pop'); };
   syncSound();
   $('btnStart').textContent = level > 1 ? `Lv.${level} からあそぶ` : 'あそぶ';
-  $('btnReset').style.display = level > 1 ? '' : 'none';
 
   window.addEventListener('resize', () => { layout(); if (G) colGeom(); });
 
